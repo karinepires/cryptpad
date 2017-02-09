@@ -186,7 +186,11 @@ const handleMessage = function (ctx, user, msg) {
         if (USE_HISTORY_KEEPER) {
             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'JOIN', chanName]);
         }
-        chan.forEach(function (u) { sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]); });
+        chan.forEach(function (u) {
+            if (ctx.users && ctx.users.indexOf(u) !== -1) {
+                sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
+            }
+        });
         chan.push(user);
         sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
         return;
