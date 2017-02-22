@@ -1,8 +1,8 @@
 define([
     '/api/config?cb=' + Math.random().toString(16).slice(2),
-    '/customize/messages.js',
-    '/customize/store.js',
-    '/bower_components/chainpad-crypto/crypto.js',
+    '/customize/messages.js?app=' + window.location.pathname.split('/').filter(function (x) { return x; }).join('.'),
+    '/customize/fsStore.js',
+    '/bower_components/chainpad-crypto/crypto.js?v=0.1.5',
     '/bower_components/alertifyjs/dist/js/alertify.js',
     '/bower_components/spin.js/spin.min.js',
     '/common/clipboard.js',
@@ -10,7 +10,7 @@ define([
     '/customize/application_config.js',
 
     '/bower_components/jquery/dist/jquery.min.js',
-], function (Config, Messages, Store, Crypto, Alertify, Spinner, Clipboard, FS, AppConfig) {
+], function (Config, Messages, Store, Crypto, Alertify, Spinner, Clipboard, AppConfig) {
 /*  This file exposes functionality which is specific to Cryptpad, but not to
     any particular pad type. This includes functions for committing metadata
     about pads to your local storage for future use and improved usability.
@@ -19,18 +19,11 @@ define([
 */
     var $ = window.jQuery;
 
-    // When set to true, USE_FS_STORE becomes the default store, but the localStorage store is
-    // still loaded for migration purpose. When false, the localStorage is used.
-    var USE_FS_STORE = AppConfig.USE_FS_STORE;
-
-    var storeToUse = USE_FS_STORE ? FS : Store;
-
     var common = window.Cryptpad = {
         Messages: Messages,
         Alertify: Alertify,
     };
     var store;
-    var fsStore;
 
     var find = common.find = function (map, path) {
         return (map && path.reduce(function (p, n) {
@@ -38,18 +31,22 @@ define([
         }, map));
     };
 
-    var getStore = common.getStore = function (legacy) {
-        if ((!USE_FS_STORE || legacy) && store) { return store; }
-        if (USE_FS_STORE && !legacy && fsStore) { return fsStore; }
+    var getStore = common.getStore = function () {
+        if (store) { return store; }
         throw new Error("Store is not ready!");
     };
     var getNetwork = common.getNetwork = function () {
-        if (USE_FS_STORE && fsStore) {
-            if (fsStore.getProxy() && fsStore.getProxy().info) {
-                return fsStore.getProxy().info.network;
+        if (store) {
+            if (store.getProxy() && store.getProxy().info) {
+                return store.getProxy().info.network;
             }
         }
         return;
+    };
+
+    var whenRealtimeSyncs = common.whenRealtimeSyncs = function (realtime, cb) {
+        realtime.sync();
+        realtime.onSettle(cb);
     };
 
     var getWebsocketURL = common.getWebsocketURL = function () {
@@ -67,6 +64,7 @@ define([
     var userHashKey = common.userHashKey = 'User_hash';
     var userNameKey = common.userNameKey = 'User_name';
     var fileHashKey = common.fileHashKey = 'FS_hash';
+    var displayNameKey = common.displayNameKey = 'cryptpad.username';
 
     var login = common.login = function (hash, name, cb) {
         if (!hash) { throw new Error('expected a user hash'); }
@@ -90,6 +88,7 @@ define([
         });
     };
 
+    var logoutHandlers = [];
     var logout = common.logout = function (cb) {
         [
             userNameKey,
@@ -113,7 +112,6 @@ define([
 
         if (cb) { cb(); }
     };
-    var logoutHandlers=  [];
     var onLogout = common.onLogout = function (h) {
         if (typeof (h) !== "function") { return; }
         if (logoutHandlers.indexOf(h) !== -1) { return; }
@@ -131,7 +129,6 @@ define([
     };
 
     var isLoggedIn = common.isLoggedIn = function () {
-        //return typeof getStore().getLoginName() === "string";
         return typeof getUserHash() === "string";
     };
 
@@ -217,15 +214,6 @@ define([
             secret.keys = Crypto.createEditCryptor();
             secret.key = Crypto.createEditCryptor().editKeyStr;
         };
-        // If we have a hash in the URL specifying a path, it means the document was created from
-        // the drive and should be stored at the selected path.
-        if (/[?&]path=/.test(window.location.hash)) {
-            var patharr = window.location.hash.match(/[?&]path=([^&]+)/);
-            var namearr = window.location.hash.match(/[?&]name=([^&]+)/);
-            common.initialPath = patharr[1] || undefined;
-            common.initialName = namearr && namearr[1] ? decodeURIComponent(namearr[1]) : undefined;
-            window.location.hash = '';
-        }
         if (!secretHash && !/#/.test(window.location.href)) {
             generate();
             return secret;
@@ -341,9 +329,9 @@ define([
     */
     var migrateRecentPads = common.migrateRecentPads = function (pads) {
         return pads.map(function (pad) {
+            var hash;
             if (isArray(pad)) {
                 var href = pad[0];
-                var hash;
                 href.replace(/\#(.*)$/, function (a, h) {
                     hash = h;
                 });
@@ -354,7 +342,7 @@ define([
                     title: pad[2] || hash && hash.slice(0,8),
                     ctime: pad[1],
                 };
-            } else if (typeof(pad) === 'object') {
+            } else if (pad && typeof(pad) === 'object') {
                 if (!pad.ctime) { pad.ctime = pad.atime; }
                 if (!pad.title) {
                     pad.href.replace(/#(.*)$/, function (x, hash) {
@@ -364,12 +352,31 @@ define([
                 if (/^https*:\/\//.test(pad.href)) {
                     pad.href = common.getRelativeHref(pad.href);
                 }
+                hash = pad.href.slice(pad.href.indexOf('#')+1);
+                if (!hash || !common.parseHash(hash)) { return; }
                 return pad;
             } else {
                 console.error("[Cryptpad.migrateRecentPads] pad had unexpected value");
                 console.log(pad);
-                return {};
+                return;
             }
+        }).filter(function (x) { return x; });
+    };
+
+    // Get the pads from localStorage to migrate them to the object store
+    var getLegacyPads = common.getLegacyPads = function (cb) {
+        require(['/customize/store.js'], function(Legacy) {
+            Legacy.ready(function (err, legacy) {
+                if (err) { cb(err, null); return; }
+                legacy.get(storageKey, function (err2, recentPads) {
+                    if (err2) { cb(err2, null); return; }
+                    if (isArray(recentPads)) {
+                        cb(void 0, migrateRecentPads(recentPads));
+                        return;
+                    }
+                    cb(void 0, []);
+                });
+            });
         });
     };
 
@@ -378,6 +385,7 @@ define([
     };
 
     var getRelativeHref = common.getRelativeHref = function (href) {
+        if (!href) { return; }
         var parsed = common.parsePadUrl(href);
         return '/' + parsed.type + '/#' + parsed.hash;
     };
@@ -446,13 +454,13 @@ define([
     };
 
     // STORAGE
-    var setPadAttribute = common.setPadAttribute = function (attr, value, cb, legacy) {
-        getStore(legacy).setDrive([getHash(), attr].join('.'), value, function (err, data) {
+    var setPadAttribute = common.setPadAttribute = function (attr, value, cb) {
+        getStore().setDrive([getHash(), attr].join('.'), value, function (err, data) {
             cb(err, data);
         });
     };
-    var setAttribute = common.setAttribute = function (attr, value, cb, legacy) {
-        getStore(legacy).set(["cryptpad", attr].join('.'), value, function (err, data) {
+    var setAttribute = common.setAttribute = function (attr, value, cb) {
+        getStore().set(["cryptpad", attr].join('.'), value, function (err, data) {
             cb(err, data);
         });
     };
@@ -461,13 +469,13 @@ define([
     };
 
     // STORAGE
-    var getPadAttribute = common.getPadAttribute = function (attr, cb, legacy) {
-        getStore(legacy).getDrive([getHash(), attr].join('.'), function (err, data) {
+    var getPadAttribute = common.getPadAttribute = function (attr, cb) {
+        getStore().getDrive([getHash(), attr].join('.'), function (err, data) {
             cb(err, data);
         });
     };
-    var getAttribute = common.getAttribute = function (attr, cb, legacy) {
-        getStore(legacy).get(["cryptpad", attr].join('.'), function (err, data) {
+    var getAttribute = common.getAttribute = function (attr, cb) {
+        getStore().get(["cryptpad", attr].join('.'), function (err, data) {
             cb(err, data);
         });
     };
@@ -493,12 +501,8 @@ define([
 
     // STORAGE
     /* fetch and migrate your pad history from localStorage */
-    var getRecentPads = common.getRecentPads = function (cb, legacy) {
-        var sstore = getStore(legacy);
-        if (legacy) {
-            sstore.getDrive = sstore.get;
-        }
-        sstore.getDrive(storageKey, function (err, recentPads) {
+    var getRecentPads = common.getRecentPads = function (cb) {
+        getStore().getDrive(storageKey, function (err, recentPads) {
             if (isArray(recentPads)) {
                 cb(void 0, migrateRecentPads(recentPads));
                 return;
@@ -509,21 +513,33 @@ define([
 
     // STORAGE
     /* commit a list of pads to localStorage */
-    var setRecentPads = common.setRecentPads = function (pads, cb, legacy) {
-        var sstore = getStore(legacy);
-        if (legacy) {
-            sstore.setDrive = sstore.set;
-        }
-        sstore.setDrive(storageKey, pads, function (err, data) {
+    var setRecentPads = common.setRecentPads = function (pads, cb) {
+        getStore().setDrive(storageKey, pads, function (err, data) {
             cb(err, data);
         });
     };
 
-    // STORAGE
-    var forgetFSPad = function (href, cb) {
-        getStore().forgetPad(href, cb);
+    // STORAGE: Display Name
+    var getLastName = common.getLastName = function (cb) {
+        common.getAttribute('username', function (err, userName) {
+            cb(err, userName);
+        });
     };
-    var forgetPad = common.forgetPad = function (href, cb, legacy) {
+    var _onDisplayNameChanged = [];
+    var onDisplayNameChanged = common.onDisplayNameChanged = function (h) {
+        if (typeof(h) !== "function") { return; }
+        if (_onDisplayNameChanged.indexOf(h) !== -1) { return; }
+        _onDisplayNameChanged.push(h);
+    };
+    var changeDisplayName = common.changeDisplayName = function (newName) {
+        _onDisplayNameChanged.forEach(function (h) {
+            h(newName);
+        });
+    };
+
+
+    // STORAGE
+    var forgetPad = common.forgetPad = function (href, cb) {
         var parsed = parsePadUrl(href);
 
         var callback = function (err, data) {
@@ -532,7 +548,7 @@ define([
                 return;
             }
 
-            getStore(legacy).keys(function (err, keys) {
+            getStore().keys(function (err, keys) {
                 if (err) {
                     cb(err);
                     return;
@@ -545,35 +561,14 @@ define([
                     cb();
                     return;
                 }
-                getStore(legacy).removeBatch(toRemove, function (err, data) {
+                getStore().removeBatch(toRemove, function (err, data) {
                     cb(err, data);
                 });
             });
         };
 
-        if (USE_FS_STORE && !legacy) {
-            // TODO implement forgetPad in store.js
-            forgetFSPad(href, callback);
-            return;
-        }
-
-        getRecentPads(function (err, recentPads) {
-            setRecentPads(recentPads.filter(function (pad) {
-                var p = parsePadUrl(pad.href);
-                // find duplicates
-                if (parsed.hash === p.hash && parsed.type === p.type) {
-                    console.log("Found a duplicate");
-                    return;
-                }
-                return true;
-            }), callback, legacy);
-        }, legacy);
-
-
-
-        if (typeof(getStore(legacy).forgetPad) === "function") {
-            // TODO implement forgetPad in store.js
-            getStore(legacy).forgetPad(href, callback);
+        if (typeof(getStore().forgetPad) === "function") {
+            getStore().forgetPad(common.getRelativeHref(href), callback);
         }
     };
 
@@ -600,6 +595,9 @@ define([
                 // Edit > Edit (present) > View > View (present)
                 var pHash = parseHash(p.hash);
                 var parsedHash = parseHash(parsed.hash);
+
+                if (!pHash) { return; } // We may have a corrupted pad in our storage, abort here in that case
+
                 if (!shouldUpdate && pHash.version === 1 && parsedHash.version === 1 && pHash.channel === parsedHash.channel) {
                     if (pHash.mode === 'view' && parsedHash.mode === 'edit') { shouldUpdate = true; }
                     else if (pHash.mode === parsedHash.mode && pHash.present) { shouldUpdate = true; }
@@ -626,7 +624,7 @@ define([
             if (!contains) {
                 var data = makePad(href, name);
                 renamed.push(data);
-                if (USE_FS_STORE && typeof(getStore().addPad) === "function") {
+                if (typeof(getStore().addPad) === "function") {
                     getStore().addPad(href, common.initialPath, common.initialName || name);
                 }
             }
@@ -691,6 +689,9 @@ define([
         });
     };
 
+    var newPadNameKey = common.newPadNameKey = "newPadName";
+    var newPadPathKey = common.newPadPathKey = "newPadPath";
+
     // local name?
     common.ready = function (f) {
         var state = 0;
@@ -701,58 +702,56 @@ define([
             f(void 0, env);
         };
 
-        var todo = function () {
-            storeToUse.ready(function (err, store) {
-                common.store = env.store = store;
-                if (USE_FS_STORE) {
-                    fsStore = store;
-                }
+        if (sessionStorage[newPadNameKey]) {
+            common.initialName = sessionStorage[newPadNameKey];
+            delete sessionStorage[newPadNameKey];
+        }
+        if (sessionStorage[newPadPathKey]) {
+            common.initialPath = sessionStorage[newPadPathKey];
+            delete sessionStorage[newPadPathKey];
+        }
 
-                $(function() {
-                    // Race condition : if document.body is undefined when alertify.js is loaded, Alertify
-                    // won't work. We have to reset it now to make sure it uses a correct "body"
-                    Alertify.reset();
+        Store.ready(function (err, storeObj) {
+            store = common.store = env.store = storeObj;
 
-                    // Load the new pad when the hash has changed
-                    var oldHash  = document.location.hash.slice(1);
-                    window.onhashchange = function () {
-                        var newHash = document.location.hash.slice(1);
-                        var parsedOld = parseHash(oldHash);
-                        var parsedNew = parseHash(newHash);
-                        if (parsedOld && parsedNew && (
-                              parsedOld.channel !== parsedNew.channel
-                              || parsedOld.mode !== parsedNew.mode
-                              || parsedOld.key !== parsedNew.key)) {
-                            document.location.reload();
-                            return;
-                        }
-                        if (parsedNew) {
-                            oldHash = newHash;
-                        }
-                    };
+            $(function() {
+                // Race condition : if document.body is undefined when alertify.js is loaded, Alertify
+                // won't work. We have to reset it now to make sure it uses a correct "body"
+                Alertify.reset();
 
-                    // Everything's ready, continue...
-                    if($('#pad-iframe').length) {
-                        var $iframe = $('#pad-iframe');
-                        var iframe = $iframe[0];
-                        var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                        if (iframeDoc.readyState === 'complete') {
-                            cb();
-                            return;
-                        }
-                        $iframe.load(cb);
+                // Load the new pad when the hash has changed
+                var oldHash  = document.location.hash.slice(1);
+                window.onhashchange = function () {
+                    var newHash = document.location.hash.slice(1);
+                    var parsedOld = parseHash(oldHash);
+                    var parsedNew = parseHash(newHash);
+                    if (parsedOld && parsedNew && (
+                          parsedOld.channel !== parsedNew.channel
+                          || parsedOld.mode !== parsedNew.mode
+                          || parsedOld.key !== parsedNew.key)) {
+                        document.location.reload();
                         return;
                     }
-                    cb();
-                });
-            }, common);
-        };
-        // If we use the fs store, make sure the localStorage or iframe store is ready
-        if (USE_FS_STORE) {
-            Store.ready(todo);
-            return;
-        }
-        todo();
+                    if (parsedNew) {
+                        oldHash = newHash;
+                    }
+                };
+
+                // Everything's ready, continue...
+                if($('#pad-iframe').length) {
+                    var $iframe = $('#pad-iframe');
+                    var iframe = $iframe[0];
+                    var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                    if (iframeDoc.readyState === 'complete') {
+                        cb();
+                        return;
+                    }
+                    $iframe.load(cb);
+                    return;
+                }
+                cb();
+            });
+        }, common);
     };
 
     var errorHandlers = [];
@@ -769,7 +768,7 @@ define([
     };
 
     var LOADING = 'loading';
-    common.addLoadingScreen = function () {
+    common.addLoadingScreen = function (loadingText) {
         if ($('#' + LOADING).length) {
             $('#' + LOADING).show();
             return;
@@ -779,7 +778,7 @@ define([
         $container.append('<img class="cryptofist" src="/customize/cryptofist_small.png" />');
         var $spinner = $('<div>', {'class': 'spinnerContainer'});
         var loadingSpinner = common.spinner($spinner).show();
-        var $text = $('<p>').text(Messages.loading);
+        var $text = $('<p>').text(loadingText || Messages.loading);
         $container.append($spinner).append($text);
         $loading.append($container);
         $('body').append($loading);
@@ -864,9 +863,7 @@ define([
             case 'export':
                 button = $('<button>', {
                     title: Messages.exportButton + '\n' + Messages.exportButtonTitle,
-                    'class': "fa fa-download",
-                    style: 'font:'+size+' FontAwesome'
-                });
+                }).append($('<span>', {'class':'fa fa-download', style: 'font:'+size+' FontAwesome'}));
                 if (callback) {
                     button.click(callback);
                 }
@@ -874,31 +871,11 @@ define([
             case 'import':
                 button = $('<button>', {
                     title: Messages.importButton + '\n' + Messages.importButtonTitle,
-                    'class': "fa fa-upload",
-                    style: 'font:'+size+' FontAwesome'
-                });
+                }).append($('<span>', {'class':'fa fa-upload', style: 'font:'+size+' FontAwesome'}));
                 if (callback) {
                     button.click(common.importContent('text/plain', function (content, file) {
                         callback(content, file);
                     }));
-                }
-                break;
-            case 'rename':
-                button = $('<button>', {
-                    id: 'name-pad',
-                    title: Messages.renameButton + '\n' + Messages.renameButtonTitle,
-                    'class': "fa fa-bookmark cryptpad-rename",
-                    style: 'font:'+size+' FontAwesome'
-                });
-                if (data && data.suggestName && callback) {
-                    var suggestName = data.suggestName;
-                    button.click(function() {
-                        var suggestion = suggestName();
-
-                        common.prompt(Messages.renamePrompt, suggestion, function (title, ev) {
-                            renamePad(title, callback);
-                        });
-                    });
                 }
                 break;
             case 'forget':
@@ -925,18 +902,6 @@ define([
                             });
                         });
 
-                    });
-                }
-                break;
-            case 'username':
-                button = $('<button>', {
-                    title: Messages.userButton + '\n' + Messages.userButtonTitle
-                }).html('<span class="fa fa-user" style="font-family:FontAwesome;"></span>');
-                if (data && typeof data.lastName !== "undefined" && callback) {
-                    button.click(function() {
-                        common.prompt(Messages.changeNamePrompt, data.lastName, function (newName) {
-                            callback(newName);
-                        });
                     });
                 }
                 break;
@@ -1111,6 +1076,117 @@ define([
         Messages._initSelector($block);
     };
 
+    var createUserAdminMenu = common.createUserAdminMenu = function (config) {
+        var $displayedName = $('<span>', {'class': config.displayNameCls || 'displayName'});
+        var accountName = localStorage[common.userNameKey];
+        var account = isLoggedIn();
+        var $userAdminContent = $('<p>');
+        if (account) {
+            var $userAccount = $('<span>', {'class': 'userAccount'}).append(Messages.user_accountName + ': ' + accountName);
+            $userAdminContent.append($userAccount);
+            $userAdminContent.append($('<br>'));
+        }
+        var $userName = $('<span>', {'class': 'userDisplayName'});
+        if (config.displayName) {
+            // Hide "Display name:" in read only mode
+            $userName.append(Messages.user_displayName + ': ');
+            $userName.append($displayedName.clone());
+        }
+        //$userName.append($displayedName.clone()); TODO remove ?
+        $userAdminContent.append($userName);
+        var options = [];
+        if (config.displayNameCls) {
+            options.push({
+                tag: 'p',
+                attributes: {'class': 'accountData'},
+                content: $userAdminContent.html()
+            });
+        }
+        // Add the change display name button if not in read only mode
+        if (config.changeNameButtonCls && config.displayChangeName) { //readOnly !== 1) { TODO
+            options.push({
+                tag: 'a',
+                attributes: {'class': config.changeNameButtonCls},
+                content: Messages.user_rename
+            });
+        }
+        var parsed = parsePadUrl(window.location.href);
+        if (parsed && (!parsed.type || parsed.type && parsed.type !== 'drive')) {
+            options.push({
+                tag: 'a',
+                attributes: {
+                    'target': '_blank',
+                    'href': '/drive/'
+                },
+                content: Messages.login_accessDrive
+            });
+        }
+        // Add login or logout button depending on the current status
+        if (account) {
+            if (parsed && parsed.type && parsed.type !== 'settings') {
+                options.push({
+                    tag: 'a',
+                    attributes: {'class': 'settings'},
+                    content: Messages.settingsButton
+                });
+            }
+            options.push({
+                tag: 'a',
+                attributes: {'class': 'logout'},
+                content: Messages.logoutButton
+            });
+        } else {
+            options.push({
+                tag: 'a',
+                attributes: {'class': 'login'},
+                content: Messages.login_login
+            });
+            options.push({
+                tag: 'a',
+                attributes: {'class': 'register'},
+                content: Messages.login_register
+            });
+        }
+        var $icon = $('<span>', {'class': 'fa fa-user'});
+        var $userbig = $('<span>', {'class': 'big'}).append($displayedName.clone());
+        var $userButton = $('<div>').append($icon).append($userbig);
+        if (account && config.displayNameCls) {
+            $userbig.append($('<span>', {'class': 'account-name'}).text('(' + accountName + ')'));
+        } else if (account) {
+            // If no display name, do not display the parentheses
+            $userbig.append($('<span>', {'class': 'account-name'}).text(accountName));
+        }
+        var dropdownConfigUser = {
+            text: $userButton.html(), // Button initial text
+            options: options, // Entries displayed in the menu
+            left: true, // Open to the left of the button
+            container: config.$initBlock // optional
+        };
+        var $userAdmin = createDropdown(dropdownConfigUser);
+
+        $userAdmin.find('a.logout').click(function (e) {
+            common.logout();
+            window.location.href = '/';
+        });
+        $userAdmin.find('a.settings').click(function (e) {
+            if (parsed && parsed.type) {
+                window.open('/settings/');
+            } else {
+                window.location.href = '/settings/';
+            }
+        });
+        $userAdmin.find('a.login').click(function (e) {
+            sessionStorage.redirectTo = window.location.href;
+            window.location.href = '/login/';
+        });
+        $userAdmin.find('a.register').click(function (e) {
+            sessionStorage.redirectTo = window.location.href;
+            window.location.href = '/register/';
+        });
+
+        return $userAdmin;
+    };
+
     /*
      *  Alertifyjs
      */
@@ -1262,15 +1338,6 @@ define([
             },
         };
     };
-
-    // All code which is called implicitly is found below
-    Store.ready(function (err, Store) {
-        if (err) {
-            console.error(err);
-            return;
-        }
-        store = Store;
-    });
 
     $(function () {
         Messages._applyTranslation();

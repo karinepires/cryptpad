@@ -47,13 +47,30 @@
         margin: 0px 10px;
         line-height: 40px;
 
+        button {
+            .buttonTitle {
+                .fa-user {
+                    margin-right: 5px;
+                }
+            }
+        }
         a {
             font-weight: 500;
             font-size: 0.75em;
-            color: @cp-purple;
+            color: @cp-link;
 
             &:hover {
+                color: @cp-link-hover;
                 text-decoration: underline;
+            }
+            &:visited {
+                color: @cp-link-visited;
+            }
+        }
+
+        &.link {
+            @media screen and (max-width: @media-not-big) {
+                display: none;
             }
         }
     }

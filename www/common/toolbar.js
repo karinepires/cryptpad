@@ -1,9 +1,10 @@
 define([
-    '/customize/messages.js',
     '/customize/application_config.js',
     '/bower_components/jquery/dist/jquery.min.js'
-], function (Messages, Config) {
+], function (Config) {
     var $ = window.jQuery;
+
+    var Messages = {};
 
     var Bar = {
         constants: {},
@@ -221,7 +222,7 @@ define([
                     editUsersNames.push('');
                     viewText += Messages.and + ' ';
                 }
-                var viewerText = numberOfViewUsers > 1 ? Messages.viewers : Messages.viewer;
+                var viewerText = numberOfViewUsers !== 1 ? Messages.viewers : Messages.viewer;
                 viewText += numberOfViewUsers + ' ' + viewerText + '</span>';
                 editUsersNames.push(viewText);
             }
@@ -236,8 +237,8 @@ define([
             // Update the buttons
             var fa_editusers = '<span class="fa fa-users"></span>';
             var fa_viewusers = '<span class="fa fa-eye"></span>';
-            var viewersText = numberOfViewUsers > 1 ? Messages.viewers : Messages.viewer;
-            var editorsText = numberOfEditUsers > 1 ? Messages.editors : Messages.editor;
+            var viewersText = numberOfViewUsers !== 1 ? Messages.viewers : Messages.viewer;
+            var editorsText = numberOfEditUsers !== 1 ? Messages.editors : Messages.editor;
             var $span = $('<span>', {'class': 'large'}).html(fa_editusers + ' ' + numberOfEditUsers + ' ' + editorsText + '&nbsp;&nbsp; ' + fa_viewusers + ' ' + numberOfViewUsers + ' ' + viewersText);
             var $spansmall = $('<span>', {'class': 'narrow'}).html(fa_editusers + ' ' + numberOfEditUsers + '&nbsp;&nbsp; ' + fa_viewusers + ' ' + numberOfViewUsers);
             $userButtons.find('.buttonTitle').html('').append($span).append($spansmall);
@@ -323,12 +324,15 @@ define([
         $aTagSmall.addClass('narrow');
         var onClick = function (e) {
             e.preventDefault();
+            if (e.ctrlKey) {
+                window.open('/');
+                return;
+            }
             window.location = "/";
         };
 
         $aTagBig.click(onClick);
         $aTagSmall.click(onClick);
-
         $linkContainer.append($aTagSmall).append($aTagBig);
     };
 
@@ -362,7 +366,7 @@ define([
                     tag: 'a',
                     attributes: {
                         'target': '_blank',
-                        'href': '/' + p,
+                        'href': '/' + p + '/',
                     },
                     content: Messages.type[p]
                 });
@@ -382,102 +386,36 @@ define([
 
         // User dropdown
         if (config.displayed.indexOf('useradmin') !== -1) {
-            if (!config.userName || !config.userName.setName || !config.userName.lastName) {
-                throw new Error("You must provide a `userName` object containing `setName` (function) " +
-                                "and `lastName` (object) if you want to display the user admin menu.");
-            }
-            var $displayedName = $('<span>', {'class': USERNAME_CLS});
-            var accountName = Cryptpad.getStore().getLoginName ? Cryptpad.getStore().getLoginName() : null;
-            var account = typeof accountName === "string";
-            var $userAdminContent = $('<p>');
-            if (account) {
-                var $userAccount = $('<span>', {'class': 'userAccount'}).append(Messages.user_accountName + ': ' + accountName);
-                $userAdminContent.append($userAccount);
-                $userAdminContent.append($('<br>'));
-            }
-            var $userName = $('<span>', {'class': 'userDisplayName'});
-            if (readOnly !== 1) {
-                // Hide "Display name:" in read only mode
-                $userName.append(Messages.user_displayName + ': ');
-            }
-            $userName.append($displayedName.clone());
-            $userAdminContent.append($userName);
-            var options = [{
-                tag: 'p',
-                attributes: {'class': 'accountData'},
-                content: $userAdminContent.html()
-            }];
-            // Add the change display name button if not in read only mode
-            if (readOnly !== 1) {
-                options.push({
-                    tag: 'a',
-                    attributes: {'class': USERBUTTON_CLS},
-                    content: Messages.user_rename
-                });
-            }
-            var parsed = Cryptpad.parsePadUrl(window.location.href);
-            if (parsed && parsed.type && parsed.type !== 'drive') {
-                options.push({
-                    tag: 'a',
-                    attributes: {
-                        'target': '_blank',
-                        'href': '/drive/'
-                    },
-                    content: Messages.login_accessDrive
-                });
-            }
-            // Add login or logout button depending on the current status
-            if (account) {
-                options.push({
-                    tag: 'a',
-                    attributes: {'class': 'logout'},
-                    content: Messages.logoutButton
-                });
-            } else {
-                options.push({
-                    tag: 'a',
-                    attributes: {'class': 'login'},
-                    content: Messages.login_login
-                });
-                options.push({
-                    tag: 'a',
-                    attributes: {'class': 'register'},
-                    content: Messages.login_register
-                });
-            }
-            var $icon = $('<span>', {'class': 'fa fa-user'});
-            var $userbig = $('<span>', {'class': 'big'}).append($displayedName.clone());
-            var $userButton = $('<div>').append($icon).append($userbig);
-            if (account) {
-                $userbig.append($('<span>', {'class': 'account-name'}).text('(' + accountName + ')'));
-            }
-            var dropdownConfigUser = {
-                text: $userButton.html(), // Button initial text
-                options: options, // Entries displayed in the menu
-                left: true, // Open to the left of the button
+            var userMenuCfg = {
+                displayNameCls: USERNAME_CLS,
+                changeNameButtonCls: USERBUTTON_CLS,
             };
-            var $userAdmin = Cryptpad.createDropdown(dropdownConfigUser);
+            if (readOnly !== 1) {
+                userMenuCfg.displayName = 1;
+                userMenuCfg.displayChangeName = 1;
+            }
+            var $userAdmin = Cryptpad.createUserAdminMenu(userMenuCfg);
+
             $userAdmin.attr('id', 'userDropdown');
             $userContainer.append($userAdmin);
 
-            $userAdmin.find('a.logout').click(function (e) {
-                Cryptpad.logout();
-                window.location.href = '/';
-            });
-            $userAdmin.find('a.login').click(function (e) {
-                window.open('/user');
-            });
-            $userAdmin.find('a.register').click(function (e) {
-                window.open('/user#register');
-            });
-
-            if (config.userName && config.userName.setName && config.userName.lastName) {
-                $userAdmin.find('a.' + USERBUTTON_CLS).click(function (e) {
-                    Cryptpad.prompt(Messages.changeNamePrompt, config.userName.lastName.lastName || '', function (newName) {
-                        config.userName.setName(newName);
+            var $userButton = $userAdmin.find('a.' + USERBUTTON_CLS);
+            var renameAlertOpened;
+            $userButton.click(function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                Cryptpad.getLastName(function (lastName) {
+                    Cryptpad.prompt(Messages.changeNamePrompt, lastName || '', function (newName) {
+                        if (newName === null && typeof(lastName) === "string") { return; }
+                        if (newName === null) { newName = ''; }
+                        Cryptpad.changeDisplayName(newName);
+                        //config.userName.setName(newName); TODO
                     });
                 });
-            }
+            });
+            Cryptpad.onDisplayNameChanged(function (newName) {
+                Cryptpad.findCancelButton().click();
+            });
         }
 
         return $userContainer;
@@ -566,6 +504,7 @@ define([
         config = config || {};
         var readOnly = (typeof config.readOnly !== "undefined") ? (config.readOnly ? 1 : 0) : -1;
         var Cryptpad = config.common;
+        Messages = Cryptpad.Messages;
         config.displayed = config.displayed || [];
 
         var toolbar = createRealtimeToolbar($container, config.title);

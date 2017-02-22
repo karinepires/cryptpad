@@ -1,6 +1,4 @@
 define([
-    '/api/config?cb=' + Math.random().toString(16).substring(2),
-    '/customize/messages.js?app=poll',
     '/bower_components/textpatcher/TextPatcher.js',
     '/bower_components/chainpad-listmap/chainpad-listmap.js',
     '/bower_components/chainpad-crypto/crypto.js',
@@ -12,8 +10,12 @@ define([
     '/common/notify.js',
     '/bower_components/file-saver/FileSaver.min.js',
     '/bower_components/jquery/dist/jquery.min.js',
-], function (Config, Messages, TextPatcher, Listmap, Crypto, Cryptpad, Hyperjson, Renderer, Toolbar, Visible, Notify) {
+], function (TextPatcher, Listmap, Crypto, Cryptpad, Hyperjson, Renderer, Toolbar, Visible, Notify) {
     var $ = window.jQuery;
+
+    var Messages = Cryptpad.Messages;
+
+    $(function () {
 
     var unlockHTML = '<i class="fa fa-unlock" aria-hidden="true"></i>';
     var lockHTML = '<i class="fa fa-lock" aria-hidden="true"></i>';
@@ -436,13 +438,6 @@ define([
         APP.proxy.info.userData = userData;
     };
 
-    //var myData = {};
-    var getLastName = function (cb) {
-        Cryptpad.getAttribute('username', function (err, userName) {
-            cb(err, userName || '');
-        });
-    };
-
     var setName = APP.setName = function (newName) {
         if (typeof(newName) !== 'string') { return; }
         var myUserNameTemp = Cryptpad.fixHTML(newName.trim());
@@ -461,8 +456,6 @@ define([
                 console.error("Couldn't set username");
                 return;
             }
-            APP.userName.lastName = myUserName;
-            //change();
         });
     };
 
@@ -574,7 +567,11 @@ define([
         } else {
             APP.proxy.info.defaultTitle = defaultName;
         }
-        updateTitle(APP.proxy.info.title || defaultName);
+        if (Cryptpad.initialName && !APP.proxy.info.title) {
+            updateTitle(Cryptpad.initialName);
+        } else {
+            updateTitle(APP.proxy.info.title || defaultName);
+        }
 
         // Description
         var resize = function () {
@@ -636,7 +633,7 @@ define([
         }
 
 
-        getLastName(function (err, lastName) {
+        Cryptpad.getLastName(function (err, lastName) {
             APP.ready = true;
 
             if (!proxy.published) {
@@ -680,13 +677,6 @@ define([
 
         userList = APP.userList = info.userList;
 
-        APP.userName = {};
-        // The lastName is stored in an object passed to the toolbar so that when the user clicks on
-        // the "change display name" button, the prompt already knows his current name
-        getLastName(function (err, lastName) {
-            APP.userName.lastName = lastName;
-        });
-
         var config = {
             displayed: ['useradmin', 'language', 'spinner', 'lag', 'state', 'share', 'userlist', 'newpad'],
             userData: userData,
@@ -695,10 +685,6 @@ define([
                 onRename: renameCb,
                 defaultName: defaultName,
                 suggestName: suggestName
-            },
-            userName: {
-                setName: setName,
-                lastName: APP.userName
             },
             ifrw: window,
             common: Cryptpad,
@@ -733,6 +719,8 @@ define([
 
         // set the hash
         if (!readOnly) { Cryptpad.replaceHash(editHash); }
+
+        Cryptpad.onDisplayNameChanged(setName);
 
         Cryptpad.getPadTitle(function (err, title) {
             if (err) {
@@ -803,6 +791,8 @@ define([
         if (info) {
             onConnectError();
         }
+    });
+
     });
 });
 

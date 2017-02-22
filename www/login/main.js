@@ -1,19 +1,17 @@
 define([
-    '/customize/application_config.js',
     '/common/cryptpad-common.js',
-    '/bower_components/lil-uri/uri.min.js',
+    '/common/login.js',
     '/bower_components/jquery/dist/jquery.min.js',
-], function (Config, Cryptpad, LilUri) {
+], function (Cryptpad, Login) {
     var $ = window.$;
 
     var APP = window.APP = {
         Cryptpad: Cryptpad,
     };
 
-    var Messages = Cryptpad.Messages;
-
     $(function () {
         var $main = $('#mainBlock');
+        var Messages = Cryptpad.Messages;
 
         // Language selector
         var $sel = $('#language-selector');
@@ -21,18 +19,9 @@ define([
         $sel.find('button').addClass('btn').addClass('btn-secondary');
         $sel.show();
 
-        // User admin menu
-        var $userMenu = $('#user-menu');
-        var userMenuCfg = {
-            $initBlock: $userMenu
-        };
-        var $userAdmin = Cryptpad.createUserAdminMenu(userMenuCfg);
-        $userAdmin.find('button').addClass('btn').addClass('btn-secondary');
-
         $(window).click(function () {
             $('.cryptpad-dropdown').hide();
         });
-
 
         // main block is hidden in case javascript is disabled
         $main.removeClass('hidden');
@@ -41,59 +30,14 @@ define([
         $main.find('#data').removeClass('hidden');
 
         if (Cryptpad.isLoggedIn()) {
-            var name = localStorage[Cryptpad.userNameKey] || sessionStorage[Cryptpad.userNameKey];
-            var $loggedInBlock = $main.find('#loggedIn');
-            var $hello = $loggedInBlock.find('#loggedInHello');
-            var $logout = $loggedInBlock.find('#loggedInLogOut');
-
-            if (name) {
-                $hello.text(Messages._getKey('login_hello', [name]));
-            } else {
-                $hello.text(Messages.login_helloNoName);
-            }
-            $('#buttons').find('.nologin').hide();
-
-            $logout.click(function () {
-                Cryptpad.logout(function () {
-                    window.location.reload();
-                });
-            });
-
-            $loggedInBlock.removeClass('hidden');
-            //return;
+            // already logged in, redirect to drive
+            document.location.href = '/drive/';
+            return;
         } else {
             $main.find('#userForm').removeClass('hidden');
         }
 
-        var displayCreateButtons = function () {
-            var $parent = $('#buttons');
-            var options = [];
-            var $container = $('<div>', {'class': 'dropdown-bar'}).appendTo($parent);
-            Config.availablePadTypes.forEach(function (el) {
-                if (el === 'drive') { return; }
-                options.push({
-                    tag: 'a',
-                    attributes: {
-                        'class': 'newdoc',
-                        'href': '/' + el + '/',
-                        'target': '_blank'
-                    },
-                    content: Messages['button_new' + el] // Pretty name of the language value
-                });
-            });
-            var dropdownConfig = {
-                text: Messages.login_makeAPad, // Button initial text
-                options: options, // Entries displayed in the menu
-                container: $container
-            };
-            var $block = Cryptpad.createDropdown(dropdownConfig);
-            $block.find('button').addClass('btn').addClass('btn-primary');
-            $block.appendTo($parent);
-        };
-
-
         /* Log in UI */
-        var Login;
         // deferred execution to avoid unnecessary asset loading
         var loginReady = function (cb) {
             if (Login) {
@@ -101,18 +45,17 @@ define([
                 return;
             }
             require([
-                '/common/login.js',
             ], function (_Login) {
                 Login = Login || _Login;
                 if (typeof(cb) === 'function') { cb(); }
             });
         };
+        loginReady();
 
-        var $uname = $('#name').on('focus', loginReady);
+        var $uname = $('#name');
 
         var $passwd = $('#password')
         // background loading of login assets
-        .on('focus', loginReady)
         // enter key while on password field clicks signup
         .on('keyup', function (e) {
             if (e.which !== 13) { return; } // enter
@@ -134,7 +77,17 @@ define([
                                 result.proxy.login_name = result.userName;
                             }
                             Cryptpad.login(result.userHash, result.userName, function () {
-                                document.location.href = '/drive/';
+                                if (sessionStorage.redirectTo) {
+                                    var h = sessionStorage.redirectTo;
+                                    var parser = document.createElement('a');
+                                    parser.href = h;
+                                    if (parser.origin === window.location.origin) {
+                                        delete sessionStorage.redirectTo;
+                                        window.location.href = h;
+                                        return;
+                                    }
+                                }
+                                window.location.href = '/drive/';
                             });
                             return;
                         }
@@ -161,26 +114,6 @@ define([
                 });
             }, 0);
         });
-        /* End Log in UI */
-
-        var addButtonHandlers = function () {
-            $('button.register').click(function (e) {
-                var username = $('#name').val();
-                var passwd = $('#password').val();
-                var remember = $('#rememberme').is(':checked');
-                sessionStorage.login_user = username;
-                sessionStorage.login_pass = passwd;
-                document.location.href = '/register/';
-            });
-            $('button.gotodrive').click(function (e) {
-                document.location.href = '/drive/';
-            });
-        };
-
-        displayCreateButtons();
-
-        addButtonHandlers();
-        console.log("ready");
     });
 });
 

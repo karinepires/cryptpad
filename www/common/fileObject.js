@@ -1,19 +1,23 @@
 define([
-    '/customize/messages.js',
     '/bower_components/jquery/dist/jquery.min.js',
-], function (Messages) {
+], function () {
     var $ = window.jQuery;
     var module = {};
 
+    var Messages = {};
+
     var ROOT = "root";
     var UNSORTED = "unsorted";
-    var FILES_DATA = "filesData";
     var TRASH = "trash";
     var TEMPLATE = "template";
-    var NEW_FOLDER_NAME = Messages.fm_newFolder;
 
     var init = module.init = function (files, config) {
-        FILES_DATA = config.storageKey || FILES_DATA;
+        var Cryptpad = config.Cryptpad;
+        Messages = Cryptpad.Messages;
+
+        var FILES_DATA = Cryptpad.storageKey;
+        var NEW_FOLDER_NAME = Messages.fm_newFolder;
+
         var DEBUG = config.DEBUG || false;
         var logging = function () {
             console.log.apply(console, arguments);
@@ -28,6 +32,16 @@ define([
         var error = exp.error = function() {
             exp.fixFiles();
             console.error.apply(console, arguments);
+        };
+
+        var getStructure = exp.getStructure = function () {
+            var a = {};
+            a[ROOT] = {};
+            a[UNSORTED] = [];
+            a[TRASH] = {};
+            a[FILES_DATA] = [];
+            a[TEMPLATE] = [];
+            return a;
         };
 
         var comparePath  = exp.comparePath = function (a, b) {
@@ -698,6 +712,7 @@ define([
 
         var forgetPad = exp.forgetPad = function (href) {
             if (workgroup) { return; }
+            if (!href) { return; }
             var rootFiles = getRootFiles().slice();
             if (rootFiles.indexOf(href) !== -1) {
                 removeFileFromRoot(files[ROOT], href);
@@ -712,6 +727,7 @@ define([
 
         var addUnsortedPad = exp.addPad = function (href, path, name) {
             if (workgroup) { return; }
+            if (!href) { return; }
             var unsortedFiles = getUnsortedFiles();
             var rootFiles = getRootFiles();
             var trashFiles = getTrashFiles();
@@ -864,7 +880,7 @@ define([
                 var trashFiles = getTrashFiles();
                 var toClean = [];
                 fd.forEach(function (el, idx) {
-                    if (typeof(el) !== "object") {
+                    if (!el || typeof(el) !== "object") {
                         debug("An element in filesData was not an object.", el);
                         toClean.push(el);
                         return;

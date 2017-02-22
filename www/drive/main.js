@@ -1,25 +1,26 @@
 require.config({ paths: { 'json.sortify': '/bower_components/json.sortify/dist/JSON.sortify' } });
 define([
-    '/api/config?cb=' + Math.random().toString(16).substring(2),
     '/bower_components/chainpad-listmap/chainpad-listmap.js',
     '/bower_components/chainpad-crypto/crypto.js',
     '/bower_components/textpatcher/TextPatcher.amd.js',
-    '/customize/messages.js?app=file',
     'json.sortify',
     '/common/cryptpad-common.js',
     '/common/fileObject.js',
     '/common/toolbar.js',
-    '/customize/application_config.js'
-], function (Config, Listmap, Crypto, TextPatcher, Messages, JSONSortify, Cryptpad, FO, Toolbar, AppConfig) {
+    '/customize/application_config.js',
+    '/common/cryptget.js'
+], function (Listmap, Crypto, TextPatcher, JSONSortify, Cryptpad, FO, Toolbar, AppConfig, Get) {
     var module = window.MODULE = {};
 
+    var Messages = Cryptpad.Messages;
     var $ = window.jQuery;
     var saveAs = window.saveAs;
+
+    // Use `$(function () {});` to make sure the html is loaded before doing anything else
+    $(function () {
+
     var $iframe = $('#pad-iframe').contents();
     var ifrw = $('#pad-iframe')[0].contentWindow;
-
-
-
 
     Cryptpad.addLoadingScreen();
     var onConnectError = function (info) {
@@ -53,10 +54,7 @@ define([
     var LOCALSTORAGE_VIEWMODE = "cryptpad-file-viewMode";
     var FOLDER_CONTENT_ID = "folderContent";
 
-    var NEW_FOLDER_NAME = Messages.fm_newFolder;
-
     var config = {};
-    config.storageKey = FILES_DATA;
     var DEBUG = config.DEBUG = true;
     var debug = config.debug = DEBUG ? function () {
         console.log.apply(console, arguments);
@@ -174,6 +172,7 @@ define([
             return files.workgroup === 1;
         };
         config.workgroup = isWorkgroup();
+        config.Cryptpad = Cryptpad;
 
         var filesOp = FO.init(files, config);
         filesOp.fixFiles();
@@ -191,18 +190,9 @@ define([
 
         // TOOLBAR
 
-        var getLastName = function (cb) {
-            Cryptpad.getAttribute('username', function (err, userName) {
-                cb(err, userName || '');
-            });
-        };
-
-        // Store the object sent for the "change username" button so that we can update the field value correctly
-        var userNameButtonObject = APP.userName = {};
         /* add a "change username" button */
         if (!APP.readOnly) {
-            getLastName(function (err, lastName) {
-                APP.userName.lastName = lastName;
+            Cryptpad.getLastName(function (err, lastName) {
                 APP.$displayName.text(lastName || Messages.anonymous);
             });
         } else {
@@ -907,8 +897,11 @@ define([
             }
             var onNamed = function (name) {
                 if (!name) { return; }
+                // TODO
                 var path = '/#?name=' + encodeURIComponent(name) + '&path=' + encodeURIComponent(currentPath);
-                window.open('/' + type + path);
+                sessionStorage[Cryptpad.newPadNameKey] = name;
+                sessionStorage[Cryptpad.newPadPathKey] = currentPath;
+                window.open('/' + type + '/');
             };
             Cryptpad.prompt(Messages.fm_nameFile, Cryptpad.getDefaultName({type: type}), onNamed);
         };
@@ -1809,6 +1802,8 @@ define([
             return false;
         }).on('remove', [], function (o, p) {
             var path = arguments[1];
+            if (path[0] !== 'drive') { return false; }
+            path = path.slice(1);
             var cPath = currentPath.slice();
             if ((filesOp.isPathInUnsorted(cPath) && filesOp.isPathInUnsorted(path)) ||
                     (filesOp.isPathInTemplate(cPath) && filesOp.isPathInTemplate(path)) ||
@@ -1849,9 +1844,53 @@ define([
                 logError("Couldn't set username", err);
                 return;
             }
-            APP.userName.lastName = myUserName;
             APP.$displayName.text(myUserName);
         });
+    };
+
+    // TODO: move that function and use a more generic API?
+    var migrateAnonDrive = function (proxy, cb) {
+        if (sessionStorage.migrateAnonDrive) {
+            // Make sure we have an FS_hash and we don't use it, otherwise just stop the migration and cb
+            if (!localStorage.FS_hash || !APP.loggedIn) {
+                delete sessionStorage.migrateAnonDrive;
+                if (typeof(cb) === "function") { cb(); }
+            }
+            // Get the content of FS_hash and then merge the objects, remove the migration key and cb
+            var todo = function (err, doc) {
+                if (err) { logError("Cannot migrate recent pads", err); return; }
+                var parsed;
+                try { parsed = JSON.parse(doc); } catch (e) { logError("Cannot parsed recent pads", e); }
+                if (parsed) {
+                    $.extend(true, proxy, parsed);
+                }
+                delete sessionStorage.migrateAnonDrive;
+                if (typeof(cb) === "function") { cb(); }
+            };
+            Get.get(localStorage.FS_hash, todo);
+        } else {
+            if (typeof(cb) === "function") { cb(); }
+        }
+    };
+    var createReadme = function (proxy, cb) {
+        if (proxy.initializing) {
+            var hash = Cryptpad.createRandomHash();
+            Get.put(hash, Messages.driveReadme, function (e) {
+                if (e) { console.error(e); }
+                var href = '/pad/#' + hash;
+                proxy.drive[UNSORTED].push(href);
+                proxy.drive[FILES_DATA].push({
+                    href: href,
+                    title: Messages.driveReadmeTitle,
+                    atime: new Date().toISOString(),
+                    ctime: new Date().toISOString()
+                });
+                if (typeof(cb) === "function") { cb(); }
+            });
+            delete proxy.initializing;
+            return;
+        }
+        if (typeof(cb) === "function") { cb(); }
     };
 
     // don't initialize until the store is ready.
@@ -1905,16 +1944,11 @@ define([
             });
 
             var userList = APP.userList = info.userList;
-            APP.userName = {};
             var config = {
                 displayed: ['useradmin', 'language', 'spinner', 'lag', 'state'],
                 readOnly: readOnly,
                 ifrw: window,
                 common: Cryptpad,
-                userName: {
-                    setName: setName,
-                    lastName: APP.userName
-                },
                 hideShare: true
             };
             var toolbar = APP.toolbar = info.realtime.toolbar = Toolbar.create(APP.$bar, info.myID, info.realtime, info.getLag, userList, config);
@@ -1947,26 +1981,19 @@ define([
                 $userBlock.append($backupButton);
             }
 
+            Cryptpad.onDisplayNameChanged(setName);
         };
         var onReady = function () {
             module.files = proxy;
-            if (JSON.stringify(proxy) === '{}') {
-                var store = Cryptpad.getStore(true);
-                var drive = proxy.drive = {};
-                store.get(Cryptpad.storageKey, function (err, s) {
-                    drive[FILES_DATA] = s;
+            if (!proxy.drive || typeof(proxy.drive) !== 'object') { proxy.drive = {}; }
+            migrateAnonDrive(proxy, function () {
+                createReadme(proxy, function () {
                     initLocalStorage();
                     init(proxy);
                     APP.userList.onChange();
                     Cryptpad.removeLoadingScreen();
                 });
-                return;
-            }
-            if (!proxy.drive || typeof(proxy.drive) !== 'object') { proxy.drive = {}; }
-            initLocalStorage();
-            init(proxy);
-            APP.userList.onChange();
-            Cryptpad.removeLoadingScreen();
+            });
         };
         var onDisconnect = function (info) {
             setEditable(false);
@@ -2006,5 +2033,5 @@ define([
         }
     });
 
-
+    });
 });

@@ -1,6 +1,5 @@
 require.config({ paths: { 'json.sortify': '/bower_components/json.sortify/dist/JSON.sortify' } });
 define([
-    '/customize/messages.js?app=pad',
     '/bower_components/chainpad-crypto/crypto.js',
     '/bower_components/chainpad-netflux/chainpad-netflux.js',
     '/bower_components/hyperjson/hyperjson.js',
@@ -16,11 +15,15 @@ define([
     '/bower_components/file-saver/FileSaver.min.js',
     '/bower_components/diff-dom/diffDOM.js',
     '/bower_components/jquery/dist/jquery.min.js',
-], function (Messages, Crypto, realtimeInput, Hyperjson,
+], function (Crypto, realtimeInput, Hyperjson,
     Toolbar, Cursor, JsonOT, TypingTest, JSONSortify, TextPatcher, Cryptpad,
     Visible, Notify) {
     var $ = window.jQuery;
     var saveAs = window.saveAs;
+    var Messages = Cryptpad.Messages;
+
+    $(function () {
+
     var ifrw = $('#pad-iframe')[0].contentWindow;
     var Ckeditor; // to be initialized later...
     var DiffDom = window.diffDOM;
@@ -95,23 +98,8 @@ define([
             secret.keys = secret.key;
         }
 
-        var fixThings = false;
-
         var editor = window.editor = Ckeditor.replace('editor1', {
-            // https://dev.ckeditor.com/ticket/10907
-            needsBrFiller: fixThings,
-            needsNbspFiller: fixThings,
-            removeButtons: 'Source,Maximize',
-            // magicline plugin inserts html crap into the document which is not part of the
-            // document itself and causes problems when it's sent across the wire and reflected back
-            removePlugins: 'resize',
-            extraPlugins: 'autolink,colorbutton,colordialog,font',
-            toolbarGroups: [{"name":"clipboard","groups":["clipboard","undo"]},{"name":"editing","groups":["find","selection"]},{"name":"links"},{"name":"insert"},{"name":"forms"},{"name":"tools"},{"name":"document","groups":["mode","document","doctools"]},{"name":"others"},{"name":"basicstyles","groups":["basicstyles","cleanup"]},{"name":"paragraph","groups":["list","indent","blocks","align","bidi"]},{"name":"styles"},{"name":"colors"}],
-            //skin: 'moono-cryptpad,/pad/themes/moono-cryptpad/'
-            //skin: 'flat,/pad/themes/flat/'
-            //skin: 'moono-lisa,/pad/themes/moono-lisa/'
-            //skin: 'moono-dark,/pad/themes/moono-dark/'
-            //skin: 'office2013,/pad/themes/office2013/'
+            customConfig: '/customize/ckeditor-config.js',
         });
 
         editor.on('instanceReady', function (Ckeditor) {
@@ -302,12 +290,6 @@ define([
                 myID = info.myID || null;
             };
 
-            var getLastName = function (cb) {
-                Cryptpad.getAttribute('username', function (err, userName) {
-                    cb(err, userName || '');
-                });
-            };
-
             var setName = module.setName = function (newName) {
                 if (typeof(newName) !== 'string') { return; }
                 var myUserNameTemp = Cryptpad.fixHTML(newName.trim());
@@ -324,7 +306,6 @@ define([
                         console.error("Couldn't set username");
                         return;
                     }
-                    module.userName.lastName = myUserName;
                     editor.fire('change');
                 });
             };
@@ -376,6 +357,8 @@ define([
                 };
                 if (!initializing) {
                     hjson[3].metadata.title = document.title;
+                } else if (Cryptpad.initialName) {
+                    hjson[3].metadata.title = Cryptpad.initialName;
                 }
                 return stringify(hjson);
             };
@@ -404,7 +387,7 @@ define([
                 crypto: Crypto.createEncryptor(secret.keys),
 
                 // really basic operational transform
-                transformFunction : JsonOT.transform || JsonOT.validate,
+                transformFunction : JsonOT.validate,
 
                 // cryptpad debug logging (default is 1)
                 // logLevel: 0,
@@ -580,13 +563,6 @@ define([
             var onInit = realtimeOptions.onInit = function (info) {
                 userList = info.userList;
 
-                module.userName = {};
-                // The lastName is stored in an object passed to the toolbar so that when the user clicks on
-                // the "change display name" button, the prompt already knows his current name
-                getLastName(function (err, lastName) {
-                    module.userName.lastName = lastName;
-                });
-
                 var config = {
                     displayed: ['useradmin', 'language', 'spinner', 'lag', 'state', 'share', 'userlist', 'newpad'],
                     userData: userData,
@@ -596,10 +572,6 @@ define([
                         onRename: renameCb,
                         defaultName: defaultName,
                         suggestName: suggestName
-                    },
-                    userName: {
-                        setName: setName,
-                        lastName: module.userName
                     },
                     common: Cryptpad
                 };
@@ -619,7 +591,6 @@ define([
                     editHash = Cryptpad.getEditHashFromKeys(info.channel, secret.keys);
                 }
 
-
                 // Expand / collapse the toolbar
                 var $existingButton = $bar.find('#cke_1_toolbar_collapser');
                 var $collapse = Cryptpad.createButton(null, true);
@@ -628,8 +599,8 @@ define([
                 var updateIcon = function () {
                     $collapse.removeClass('fa-caret-down').removeClass('fa-caret-up');
                     var isCollapsed = !$bar.find('.cke_toolbox_main').is(':visible');
-                    if (isCollapsed) { $collapse.addClass('fa-caret-down') }
-                    else { $collapse.addClass('fa-caret-up') }
+                    if (isCollapsed) { $collapse.addClass('fa-caret-down'); }
+                    else { $collapse.addClass('fa-caret-up'); }
                 };
                 updateIcon();
                 $collapse.click(function () {
@@ -676,6 +647,8 @@ define([
 
                 // set the hash
                 if (!readOnly) { Cryptpad.replaceHash(editHash); }
+
+                Cryptpad.onDisplayNameChanged(setName);
             };
 
             // this should only ever get called once, when the chain syncs
@@ -711,7 +684,7 @@ define([
                     });
                 }
 
-                getLastName(function (err, lastName) {
+                Cryptpad.getLastName(function (err, lastName) {
                     console.log("Unlocking editor");
                     setEditable(true);
                     initializing = false;
@@ -720,7 +693,7 @@ define([
                     // Update the toolbar list:
                     // Add the current user in the metadata if he has edit rights
                     if (readOnly) { return; }
-                    if (typeof(lastName) === 'string' && lastName.length) {
+                    if (typeof(lastName) === 'string') {
                         setName(lastName);
                     } else {
                         myData[myID] = {
@@ -739,7 +712,7 @@ define([
                 setEditable(false);
                 // TODO inform them that the session was torn down
                 toolbar.failed();
-                Cryptpad.alert(Messages.disconnectAlert);
+                Cryptpad.alert(Messages.common_connectionLost);
             };
 
             var onConnectionChange = realtimeOptions.onConnectionChange = function (info) {
@@ -750,7 +723,7 @@ define([
                     toolbar.reconnecting(info.myId);
                     Cryptpad.findOKButton().click();
                 } else {
-                    Cryptpad.alert(Messages.disconnectAlert);
+                    Cryptpad.alert(Messages.common_connectionLost);
                 }
             };
 
@@ -831,4 +804,6 @@ define([
     };
 
     $(first);
+
+    });
 });

@@ -1,6 +1,5 @@
 require.config({ paths: { 'json.sortify': '/bower_components/json.sortify/dist/JSON.sortify' } });
 define([
-    '/customize/messages.js?app=code',
     '/bower_components/chainpad-crypto/crypto.js',
     '/bower_components/chainpad-netflux/chainpad-netflux.js',
     '/bower_components/textpatcher/TextPatcher.amd.js',
@@ -15,9 +14,11 @@ define([
     '/slide/slide.js',
     '/bower_components/file-saver/FileSaver.min.js',
     '/bower_components/jquery/dist/jquery.min.js',
-], function (Messages, Crypto, Realtime, TextPatcher, Toolbar, JSONSortify, JsonOT, Cryptpad, Modes, Themes, Visible, Notify, Slide) {
+], function (Crypto, Realtime, TextPatcher, Toolbar, JSONSortify, JsonOT, Cryptpad, Modes, Themes, Visible, Notify, Slide) {
     var $ = window.jQuery;
     var saveAs = window.saveAs;
+
+    var Messages = Cryptpad.Messages;
 
     var module = window.APP = {
         Cryptpad: Cryptpad,
@@ -28,9 +29,7 @@ define([
 
     var SLIDE_BACKCOLOR_ID = "cryptpad-backcolor";
     var SLIDE_COLOR_ID = "cryptpad-color";
-    Cryptpad.styleAlerts();
 
-    Cryptpad.addLoadingScreen();
 
     var stringify = function (obj) {
         return JSONSortify(obj);
@@ -45,6 +44,9 @@ define([
     };
 
     $(function () {
+        Cryptpad.styleAlerts();
+        Cryptpad.addLoadingScreen();
+
         var ifrw = module.ifrw = $('#pad-iframe')[0].contentWindow;
         var toolbar;
 
@@ -264,14 +266,7 @@ define([
                         console.error(err);
                         return;
                     }
-                    module.userName.lastName = myUserName;
                     onLocal();
-                });
-            };
-
-            var getLastName = function (cb) {
-                Cryptpad.getAttribute('username', function (err, userName) {
-                    cb(err, userName || '');
                 });
             };
 
@@ -418,13 +413,6 @@ define([
             var onInit = config.onInit = function (info) {
                 userList = info.userList;
 
-                module.userName = {};
-                // The lastName is stored in an object passed to the toolbar so that when the user clicks on
-                // the "change display name" button, the prompt already knows his current name
-                getLastName(function (err, lastName) {
-                    module.userName.lastName = lastName;
-                });
-
                 var config = {
                     displayed: ['useradmin', 'language', 'spinner', 'lag', 'state', 'share', 'userlist', 'newpad'],
                     userData: userData,
@@ -434,10 +422,6 @@ define([
                         onRename: renameCb,
                         defaultName: defaultName,
                         suggestName: suggestName
-                    },
-                    userName: {
-                        setName: setName,
-                        lastName: module.userName
                     },
                     common: Cryptpad
                 };
@@ -599,6 +583,8 @@ define([
                 if (!window.location.hash || window.location.hash === '#') {
                     Cryptpad.replaceHash(editHash);
                 }
+
+                Cryptpad.onDisplayNameChanged(setName);
             };
 
             var unnotify = module.unnotify = function () {
@@ -652,6 +638,11 @@ define([
                 editor.setValue(newDoc || '');
                 Slide.update(newDoc);
 
+                if (Cryptpad.initialName && APP.title === defaultName) {
+                    updateTitle(Cryptpad.initialName);
+                    onLocal();
+                }
+
                 if (Visible.isSupported()) {
                     Visible.onChange(function (yes) {
                         if (yes) { unnotify(); }
@@ -673,7 +664,7 @@ define([
                 //Cryptpad.log("Your document is ready");
 
                 onLocal(); // push local state to avoid parse errors later.
-                getLastName(function (err, lastName) {
+                Cryptpad.getLastName(function (err, lastName) {
                     if (err) {
                         console.log("Could not get previous name");
                         console.error(err);
@@ -682,7 +673,7 @@ define([
                     // Update the toolbar list:
                     // Add the current user in the metadata if he has edit rights
                     if (readOnly) { return; }
-                    if (typeof(lastName) === 'string' && lastName.length) {
+                    if (typeof(lastName) === 'string') {
                         setName(lastName);
                     } else {
                         myData[myID] = {
@@ -782,7 +773,7 @@ define([
                 // inform of network disconnect
                 setEditable(false);
                 toolbar.failed();
-                Cryptpad.alert(Messages.disconnectAlert);
+                Cryptpad.alert(Messages.common_connectionLost);
             };
 
             var onConnectionChange = config.onConnectionChange = function (info) {
@@ -793,7 +784,7 @@ define([
                     toolbar.reconnecting(info.myId);
                     Cryptpad.findOKButton().click();
                 } else {
-                    Cryptpad.alert(Messages.disconnectAlert);
+                    Cryptpad.alert(Messages.common_connectionLost);
                 }
             };
 
