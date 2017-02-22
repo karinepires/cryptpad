@@ -187,7 +187,7 @@ const handleMessage = function (ctx, user, msg) {
             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'JOIN', chanName]);
         }
         chan.forEach(function (u) {
-            if (ctx.users && ctx.users.indexOf(u) !== -1) {
+            if (ctx.users && Object.keys(ctx.users).indexOf(u) !== -1) {
                 sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
             }
         });
@@ -216,6 +216,7 @@ const handleMessage = function (ctx, user, msg) {
             }
             return;
         }
+    console.log(obj);
         if (obj && !ctx.channels[obj] && !ctx.users[obj]) {
             sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
             return;
