@@ -216,7 +216,6 @@ const handleMessage = function (ctx, user, msg) {
             }
             return;
         }
-    console.log(obj);
         if (obj && !ctx.channels[obj] && !ctx.users[obj]) {
             sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
             return;
